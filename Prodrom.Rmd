@@ -1,0 +1,1144 @@
+---
+title: "Prodrom"
+author: "Bahareh Khosravi"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r chunk-label, include=FALSE}
+#clean the memory 
+rm(list = ls())
+```
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(message = FALSE,warning=FALSE)
+```
+
+## Definition of relapse prodrome in ANCA vasculitis
+
+Prodrome of relapse is an early sign or symptom (or set of signs and symptoms) that often indicates the onset of relapse before more diagnostically specific signs and symptoms develop. In the study, an algorithm was designed according to the clinician's idea by considering the limitation of availability of clinical factors to determine the relapse prodrome that is showed in figure 1.
+
+In the process the history of the variables will be considered:\
+1. Relapse situation\
+2. Creatinine\
+3. CRP (C-Reactive Protein)\
+4. ANCA level (Max of Anti-MPO and Anti-PR3)\
+5. Urinalysis Blood\
+6. Urinalysis Protein\
+7. CD136\
+The factors are ordered according to their clinical importance to show relapse, going to the other factors is in the conditions that there are no significant changes in previouse ones.
+
+![Figure1,](images/Untitled%20drawing%20(2).jpg)
+
+Figure 2, shows the steps are followed for every mentioned factors with more details. According to the algorithm, first the interval of previous encounter has to be checked. If it is less than 180 days the next step is to check the singes of relapse and when it is more than 180 days cut the loop and consider one encounter before that selected encounter as onset date of relapse.
+
+![Figur2,](images/Figure2,%20Symptom_%20Relapse%20situation.jpg){width="500"}
+
+```{r, include=FALSE}
+#import data and exclude encounters with duplicated date of visit
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+In the following, every factor is considered separately. Eventually, the max of observed interval times for prodrome in every encounter is selected as the final prodrom for every encounter. \### Definition of relapse prodrome in ANCA vasculitis in terms of history of:
+
+### 1. Relapse situation:
+
+#### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of relapse
+3.  Compute the interval of every visit date from the next one for every patient
+
+```{r}
+# filter encounters with interval more than 3 months from diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# exclude missing in Relapse_Code
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(Relapse_Code))
+```
+
+```{r}
+## compute the interval of lead visit date 
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),
+                           "0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+#### Determine the onset of relapse, according to the history of relapse:
+1.  Check the previous visit date before every visit date with flare until there are symptoms by considering the rules.
+    a. Max duration to prior encounter equals to 180 days
+    b. The relapse in the prior encounter with "Possible Relapse"
+2.  Determine the date of flare onset\
+
+```{r}
+# Check the previous visit date before every visit date with flare until there are symptoms by considering the rules
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  # if relapse is missing
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymRelapseJ[i] = NA
+    # if there is a "definite relapse"
+    } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    # check encounters before the encounter with relapse == "2"
+    for (j in 1:(i-1)) {
+      # The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]){
+        # if it is missing and the interval of the previous visit is less than 180 go to the next
+        if (is.na(lag(exRKD_Relapse$Relapse_Code,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180){
+          next
+      # if previuos Relapse = 1 and the interval of the previous visit is less than 180 go to the next
+        } else if ((lag(exRKD_Relapse$Relapse_Code,j)[i]=="1")&lag(exRKD_Relapse$Leadvisit,j)[i]<180){
+          next
+          # in other situation consider the previous encounter and cut the loop
+        } else (exRKD_Relapse$SymRelapseJ[i] = j-1)&break
+        # in other situation consider the previous encounter and cut the loop
+      } else (exRKD_Relapse$SymRelapseJ[i] = j-1)&break
+    }
+ # if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymRelapseJ[i] = NA)
+}
+```
+
+```{r}
+## determine the date of determined encounters
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  n = exRKD_Relapse$SymRelapseJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$Relapse_Code,n-j)[i])) {
+        (exRKD_Relapse$SymDateRelapse[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateRelapse[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+# save the data
+library(rio)
+Prodrom_Relapse <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymRelapseJ","SymDateRelapse")]
+Prodrom_Relapse$`Date Of Visit` <- as.Date(Prodrom_Relapse$`Date Of Visit`)
+export(Prodrom_Relapse,"Prodrom_Relapse.xlsx")
+```
+
+### 2. CRP:
+
+```{r, include=FALSE}
+# import data and exclude encounters with duplicated date of visit
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+#### Preprocessing the data to consider the history of relapse:
+
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of CRP and not definite relapse
+3.  Compute the interval of every visit date from the next one for every patient
+
+```{r}
+# filter encounters with interval more than 3 months from diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# exclude encounters with missing values of CRP and not definite relapse
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(CRP)|Relapse_Code=="2")
+```
+
+```{r}
+# compute the interval of lead visit date 
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),
+                            "0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+#### To determine the onset of relapse, an algorithm is desinged:
+1.  This algorithm tells us that check the previous visit date before every visit date with flare until there are symptoms by considering the rules
+    a. Max duration to prior encounter equals to 180 days
+    b. The min CRP in the prior encounter equals to 5
+2.  Determine the date of flare onset
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+   # if the relapse is missing then puting SymCRPJ[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymCRPJ[i] = NA
+    # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+   # check encounters before the encounter with relapse == "2"
+    for (j in 1:(i-1)) {
+      ## The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]){
+        ## if it is missing and the interval of the previous visit is less than 180 go to the next
+        if (is.na(lag(exRKD_Relapse$CRP,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!="2"){
+          next
+          ## if CRP is more than 5 and the interval of the previous visit is less than 180 go to the next
+        } else if (lag(exRKD_Relapse$CRP,j)[i]>5&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!="2"){
+          next
+          ## in other situation consider the previous encounter and cut the loop
+        } else (exRKD_Relapse$SymCRPJ[i] = j-1)&break
+        ## in other situation consider the previous encounter and cut the loop
+      } else (exRKD_Relapse$SymCRPJ[i] = j-1)&break
+    }
+    # if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymCRPJ[i] = NA)
+}
+```
+
+```{r}
+## determine the date of determined encounters
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  n = exRKD_Relapse$SymCRPJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$CRP,n-j)[i])) {
+        (exRKD_Relapse$SymDateCRP[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateCRP[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+## save the data
+library(rio)
+Prodrom_CRP <- exRKD_Relapse[,c("RKD ID","Date Of Visit","CRP","SymCRPJ","SymDateCRP")]
+Prodrom_CRP$`Date Of Visit` <- as.Date(Prodrom_CRP$`Date Of Visit`)
+export(Prodrom_CRP,"Prodrom_CRP.xlsx")
+```
+
+### 3. Creatinine:
+
+```{r, include=FALSE}
+## import data and exclude encounters with duplicated date of visit and install packages
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(dplyr)
+library(tidylog)
+library(rio)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+#### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of creatinine and not definite relapse
+3.  Compute the interval of every visit date from the next one for every patient
+
+```{r}
+# filter encounters with intervals more than 3 months from the diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# exclude encounters with missing values of creatinine and no definite relapse
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(Creatinine)|Relapse_Code=="2")
+```
+
+```{r}
+# compute the interval of the lead visit date
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+##### Determine the onset of relapse, according to Creatinine:
+1.  Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+  a. Max duration to prior encounter equals to 180 days
+  b. Max 12 month interval between the 2 encounters prior the encounter
+  c. The Cr in the prior encounter rose 20 percentage
+2.  Determine the date of flare onset
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  # if the relapse is missing then puting SymCrJ[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymCrJ[i] = NA
+     # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    for (j in 1:(i-1)) {
+    # The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]&lag(exRKD_Relapse$`RKD ID`,j+1)[i]==exRKD_Relapse$`RKD ID`[i]){
+     # IF the jth previous Cr exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse 
+        if (is.na(lag(exRKD_Relapse$Creatinine,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!=2|
+     # OR the (j+1)th previous Cr exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse 
+            is.na(lag(exRKD_Relapse$Creatinine,j+1)[i])&lag(exRKD_Relapse$Leadvisit,j+1)[i]<360&lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2){
+          next} else if 
+        #IF Cr exits in the jth and (j+1)th previous encounters
+        (!is.na(lag(exRKD_Relapse$Creatinine,j)[i])&
+         !is.na(lag(exRKD_Relapse$Creatinine,j+1)[i])&
+         # AND max duration to previous encounter equals to 180 days
+         lag(exRKD_Relapse$Leadvisit,j)[i]<180&
+         # AND max interval between jth and (j+1)th previous encounter equals to 360 days
+         (lag(exRKD_Relapse$`Date Of Visit`,j)[i]-lag(exRKD_Relapse$`Date Of Visit`,j+1)[i])<360&
+         # AND jth previous visits is not definite relapse
+         lag(exRKD_Relapse$Relapse_Code,j)[i]!=2&
+         # AND (j+1)th previous visits is not definite relapse
+         lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2&
+         # jth previous visit rose 20 percentage
+         (100*(lag(exRKD_Relapse$Creatinine,j)[i]-
+               lag(exRKD_Relapse$Creatinine,j+1)[i])/lag(exRKD_Relapse$Creatinine,j+1)[i])>20){
+          next } else 
+        #in other situation consider the previous encounter and cut the loop
+          (exRKD_Relapse$SymCrJ[i] = j-1)&break
+      } else 
+      #in other situation consider the previous encounter and cut the loop
+      (exRKD_Relapse$SymCrJ[i] = j-1)&break
+    }
+    #if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymCrJ[i] = NA)
+}
+```
+
+```{r}
+#set up date format
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`-1)) {
+  #put the valuse in SymCrJ[i] in a new variable
+  n = exRKD_Relapse$SymCrJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$Creatinine,n-j)[i])) {
+        (exRKD_Relapse$SymDateCr[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateCr[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+## Save the data
+library(rio)
+Prodrom_Cr <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymCrJ", "SymDateCr")]
+Prodrom_Cr$`Date Of Visit` <- as.Date(Prodrom_Cr$`Date Of Visit`)
+export(Prodrom_Cr,"Prodrom_Cr.xlsx")
+```
+
+### 4. The maximum of Anti-MPO and Anti-PR3 introduced as the ANCA level:
+
+```{r, include=FALSE}
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+#### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Create a new variable by picking the maximum of Anti-MPO and Anti-PR3 and
+3.  Exclude encounters with missing values in the variable and not definite relapse and fill missing in Relapse with "0"(this is not affect our desition about selecting the oneset it is just to solve bugs in the code)
+4.  Compute the interval of every visit date from the next one for every patient
+
+```{r}
+# filter encounters with intervals more than 3 months from the diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# create a ANCA level using max of Anti-MPO level and Anti-PR3 level
+exRKD_Relapse <- exRKD_Relapse %>%
+   mutate(Anti_ANCA_Level = ifelse(!is.na(`Anti-MPO level`)&is.na(`Anti-PR3 level`),`Anti-MPO level`,
+                              ifelse(is.na(`Anti-MPO level`)&!is.na(`Anti-PR3 level`),`Anti-PR3 level`,
+                                     pmax(`Anti-MPO level`,`Anti-PR3 level`))))
+```
+
+```{r}
+# exclude missing in Anti_ANCA_Level except where the relapse is "definite relapse"
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(Anti_ANCA_Level)|Relapse_Code=="2")
+# fill missing in Relapse with 0
+exRKD_Relapse <- exRKD_Relapse %>%
+  mutate(Relapse_Code = ifelse(is.na(Relapse_Code),"0",Relapse_Code))
+```
+
+```{r}
+# Compute the interval of every visit date from the next one for every patient
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+#### Determine the onset of relapse, according to The max of Anti-PR3/Anti-PMO as ANCA level:
+1.  Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+  a. Max duration to prior encounter equals to 180 days
+  b. Max 12 month interval between the 2 encounters prior the encounter
+  c. ANCA level in the prior encounter rose 20 percentage
+2.  Determine the date of flare onset according to ANCA level
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  # if the relapse is missing then puting SymANCAJ[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymANCAJ[i] = NA
+     # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    for (j in 1:(i-1)) {
+    # The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]&lag(exRKD_Relapse$`RKD ID`,j+1)[i]==exRKD_Relapse$`RKD ID`[i]){
+     # IF the jth previous "ANCA level" exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse 
+        if (is.na(lag(exRKD_Relapse$Anti_ANCA_Level,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!=2|
+     # OR the (j+1)th previous "ANCA level" exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse 
+            is.na(lag(exRKD_Relapse$Anti_ANCA_Level,j+1)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<360&lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2)
+          {
+          next
+          } else if 
+        #IF ANCA exits in the jth and (j+1)th previous encounters
+        (!is.na(lag(exRKD_Relapse$Anti_ANCA_Level,j)[i])&
+         !is.na(lag(exRKD_Relapse$Anti_ANCA_Level,j+1)[i])&
+         # AND max duration to previous encounter equals to 180 days
+         lag(exRKD_Relapse$Leadvisit,j)[i]<180&
+         # AND max interval between jth and (j+1)th previous encounter equals to 360 days
+         (lag(exRKD_Relapse$`Date Of Visit`,j)[i]-lag(exRKD_Relapse$`Date Of Visit`,j+1)[i])<360&
+         # AND jth previous visits is not definite relapse
+         lag(exRKD_Relapse$Relapse_Code,j)[i]!=2&
+         # AND (j+1)th previous visits is not definite relapse
+         lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2&
+         # jth previous visit rose 20 percentage
+         (100*(lag(exRKD_Relapse$Anti_ANCA_Level,j)[i]-
+               lag(exRKD_Relapse$Anti_ANCA_Level,j+1)[i])/lag(exRKD_Relapse$Anti_ANCA_Level,j+1)[i])>20){
+          next } else 
+        #in other situation consider the previous encounter and cut the loop
+          (exRKD_Relapse$SymANCAJ[i] = j-1)&break
+      } else 
+      #in other situation consider the previous encounter and cut the loop
+      (exRKD_Relapse$SymANCAJ[i] = j-1)&break
+    }
+    #if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymANCAJ[i] = NA)
+}
+```
+
+```{r}
+# Determine the date of flare onset according to ANCA level
+# set up date format
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`-1)) {
+  #put the valuse in SymANCAJ[i] in a new variable
+  n = exRKD_Relapse$SymANCAJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$Anti_ANCA_Level,n-j)[i])) {
+        (exRKD_Relapse$SymDateANCAJ[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateANCAJ[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+## Save the data
+library(rio)
+Prodrom_ANCALevel <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymANCAJ", "SymDateANCAJ")]
+Prodrom_ANCALevel$`Date Of Visit` <- as.Date(Prodrom_ANCALevel$`Date Of Visit`)
+export(Prodrom_ANCALevel,"Prodrom_ANCALevel.xlsx")
+```
+
+### 6. Uninalysis Blood:
+##### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of "Uninalysis Blood" if they are not in the definite relapse situation
+3.  Compute the interval of every visit date from the next one for every patient
+4.  Recode the "Uninalysis Blood"
+
+```{r, include=FALSE}
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+```{r}
+# filter encounters with intervals more than 3 months from the diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# Exclude encounters with missing values of "Uninalysis Blood" if they are not in the definite relapse situation
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(`Uninalysis Blood`)|Relapse_Code=="2")
+```
+
+```{r}
+# Compute the interval of every visit date from the next one for every patient
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+```{r}
+# Consider the variable as a numeric variable
+exRKD_Relapse <- exRKD_Relapse %>%
+  # "Negative" as 0 AND "1" as 1 AND "2" as 2 and ">=+3" as 3 
+  mutate(Uninalysis_Blood = ifelse(`Uninalysis Blood`=="Negative","0",
+                                   ifelse(`Uninalysis Blood`==">=+3","3",`Uninalysis Blood`)))
+exRKD_Relapse$Uninalysis_Blood <- as.numeric(exRKD_Relapse$Uninalysis_Blood)
+```
+
+##### Determine the onset of relapse, according to "Uninalysis Blood":
+1. Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+  a. Max duration to prior encounter equals to 180 days
+  b. Max 12 month interval between the 2 encounters prior the encounter
+  c. The "Uninalysis Blood" has an increase of 2 points compared to the prior visit
+2.  Determine the date of flare onset
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  # if the relapse is missing then puting SymUniBloodJ[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymUniBloodJ[i] = NA
+     # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    for (j in 1:(i-1)) {
+      ## The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]&lag(exRKD_Relapse$`RKD ID`,j+1)[i]==exRKD_Relapse$`RKD ID`[i]){
+        # IF the jth previous Uninalysis_Blood exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse 
+        if (is.na(lag(exRKD_Relapse$Uninalysis_Blood,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!=2|
+            # OR the (j+1)th previous Uninalysis_Blood exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+            is.na(lag(exRKD_Relapse$Uninalysis_Blood,j+1)[i])&lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2){
+          next
+          # IF Uninalysis_Blood exits in the jth and (j+1)th previous encounters 
+        } else if (!is.na(lag(exRKD_Relapse$Uninalysis_Blood,j)[i])&
+                   !is.na(lag(exRKD_Relapse$Uninalysis_Blood,j+1)[i])&
+                   # AND max duration to previous encounter equals to 180 days 
+                   lag(exRKD_Relapse$Leadvisit,j)[i]<180&
+                   # AND jth previous visits is not definite relapse
+                   lag(exRKD_Relapse$Relapse_Code,j)[i]!=2&
+                    # AND (j+1)th previous visits is not definite relapse
+                   lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2&
+                   # jth previous visits has has more than 2 unit increase in Uninalysis_Blood
+                   lag(exRKD_Relapse$Uninalysis_Blood,j)[i]-lag(exRKD_Relapse$Uninalysis_Blood,j+1)[i] >2) {
+          next
+          # in other situation consider the previous encounter and cut the loop
+        } else (exRKD_Relapse$SymUniBloodJ[i] = j-1)&break
+        # in other situation consider the previous encounter and cut the loop
+      } 
+    else (exRKD_Relapse$SymUniBloodJ[i] = j-1)&break
+    }
+    # if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymUniBloodJ[i] = NA)
+}
+```
+
+```{r}
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`-1)) {
+  #put the valuse in SymUniBloodJ[i] in a new variable
+  n = exRKD_Relapse$SymUniBloodJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$Uninalysis_Blood,n-j)[i])) {
+        (exRKD_Relapse$SymDateUniBloodJ[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateUniBloodJ[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+## Save the data
+library(rio)
+Prodrom_UniBlood <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymUniBloodJ","SymDateUniBloodJ")]
+Prodrom_UniBlood$`Date Of Visit` <- as.Date(Prodrom_UniBlood$`Date Of Visit`)
+export(Prodrom_UniBlood,"Prodrom_UniBlood.xlsx")
+```
+
+### 7. Uninalysis Protein:
+##### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of "Uninalysis Protein" if they are not in the definite relapse situation
+3.  Compute the interval of every visit date from the next one for every patient
+4.  Recode the "Uninalysis Protein"
+
+```{r, include=FALSE}
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+```{r}
+# filter encounters with intervals more than 3 months from the diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(`Uninalysis Protein`)|Relapse_Code=="2")
+```
+
+```{r}
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+```{r}
+# Consider the variable as a numeric variable
+exRKD_Relapse <- exRKD_Relapse %>%
+   # "Negative" as 0 AND "1" as 1 AND "2" as 2 and ">=+3" as 3
+  mutate(Uninalysis_Protein = ifelse(`Uninalysis Protein`=="Negative","0",
+                                   ifelse(`Uninalysis Protein`==">=+3","3",`Uninalysis Protein`)))
+exRKD_Relapse$Uninalysis_Protein <- as.numeric(exRKD_Relapse$Uninalysis_Protein)
+```
+
+##### Determine the onset of relapse, according to "Uninalysis Protein":
+1. Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+   a. Max duration to prior encounter equals to 180 days
+   b. The "Uninalysis Protein" has an increase of 2 points compared to the prior visit
+2. Determine the date of flare onset in terms of Uninalysis Protein
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+   # if the relapse is missing then putting SymUniProteinJ[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymUniProteinJ[i] = NA
+    # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    for (j in 1:(i-1)) {
+      # The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]&lag(exRKD_Relapse$`RKD ID`,j+1)[i]==exRKD_Relapse$`RKD ID`[i]){
+        # IF the jth previous Uninalysis_Protein exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+        if (is.na(lag(exRKD_Relapse$Uninalysis_Protein,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!=2|
+       # OR the (j+1)th previous Uninalysis_Protein exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+            is.na(lag(exRKD_Relapse$Uninalysis_Protein,j+1)[i])&lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2){
+          next
+          # IF Uninalysis_Blood exits in the jth and (j+1)th previous encounters
+        } else if (!is.na(lag(exRKD_Relapse$Uninalysis_Protein,j)[i])&
+                   !is.na(lag(exRKD_Relapse$Uninalysis_Protein,j+1)[i])&
+                   # AND max duration to previous encounter equals to 180 days 
+                   lag(exRKD_Relapse$Leadvisit,j)[i]<180&
+                   # AND jth previous visits is not definite relapse
+                   lag(exRKD_Relapse$Relapse_Code,j)[i]!=2&
+                   # AND (j+1)th previous visits is not definite relapse
+                   lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2&
+                   # AND jth previous visits has more than 2 unit increase in Uninalysis_Protein
+                   lag(exRKD_Relapse$Uninalysis_Protein,j)[i]-lag(exRKD_Relapse$Uninalysis_Protein,j+1)[i] >2) {
+          next
+          # in other situation consider the previous encounter and cut the loop
+        } else (exRKD_Relapse$SymUniProteinJ[i] = j-1)&break
+        # in other situation consider the previous encounter and cut the loop
+      } 
+    else (exRKD_Relapse$SymUniProteinJ[i] = j-1)&break
+    }
+    # if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymUniProteinJ[i] = NA)
+}
+```
+
+```{r}
+## Determine the date of flare onset in terms of Uninalysis Protei
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`-1)) {
+  #put the valuse in SymUniProteinJ[i] in a new variable
+  n = exRKD_Relapse$SymUniProteinJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$Uninalysis_Protein,n-j)[i])) {
+        (exRKD_Relapse$SymDateUniProteinJ[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateUniProteinJ[i] = NA)
+}
+```
+
+```{r, include=FALSE}
+## Save the data
+library(rio)
+Prodrom_UniProtein <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymUniProteinJ","SymDateUniProteinJ")]
+Prodrom_UniProtein$`Date Of Visit` <- as.Date(Prodrom_UniProtein$`Date Of Visit`)
+export(Prodrom_UniProtein,"Prodrom_UniProtein.xlsx")
+```
+
+### 8. CD136:
+
+```{r, include=FALSE}
+#Install packages
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(dplyr)
+library(tidylog)
+library(rio)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+##### Preprocessing the data to consider the history of relapse:
+1.  Exclude encounters with interval less than 3 months from diagnosis date
+2.  Exclude encounters with missing values of CD136 and not definite relapse
+3.  Compute the interval of every visit date from the next one for every patient
+
+```{r}
+# filter encounters with interval more than 3 months from diagnosis date
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+# Exclude encounters with missing values of CD136 and not definite relapse
+exRKD_Relapse <- exRKD_Relapse %>%
+  filter(!is.na(`Urine sCD163 (ng/mmmol), Euroimmun`)|Relapse_Code=="2")
+exRKD_Relapse$CD136 <- exRKD_Relapse$`Urine sCD163 (ng/mmmol), Euroimmun`
+```
+
+```{r}
+# Compute the interval of every visit date from the next one for every patient
+exRKD_Relapse <- exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_Relapse$Leadvisit <- as.numeric(exRKD_Relapse$Leadvisit)
+```
+
+#### Determine the onset of relapse according to the CD136:
+1.  Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+   a. Max duration to prior encounter equals to 180 days
+   b. Max 12 month interval between the 2 encounters prior the encounter
+   c. The CD136 in the prior encounter rose 20 percentage
+2.  Determine the date of flare onset
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_Relapse$`RKD ID`)) {
+  # if the relapse is missing then puting SymCD136J[i] = NA
+  if (is.na(exRKD_Relapse$Relapse_Code[i])) { 
+    exRKD_Relapse$SymCD136J[i] = NA
+   # if there is a "definite relapse"
+  } else if(exRKD_Relapse$Relapse_Code[i] == "2"){
+    for (j in 1:(i-1)) {
+      ## The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_Relapse$`RKD ID`,j)[i]==exRKD_Relapse$`RKD ID`[i]&lag(exRKD_Relapse$`RKD ID`,j+1)[i]==exRKD_Relapse$`RKD ID`[i]){
+        # IF the jth previous CD136 exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+        if (is.na(lag(exRKD_Relapse$CD136,j)[i])&lag(exRKD_Relapse$Leadvisit,j)[i]<180&lag(exRKD_Relapse$Relapse_Code,j)[i]!=2|
+        # OR the (j+1)th previous CD136 exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+            is.na(lag(exRKD_Relapse$CD136,j+1)[i])&lag(exRKD_Relapse$Leadvisit,j+1)[i]<360&lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2){
+          next
+          # IF CD136 exits in the jth CD136 exists AND more than 250 
+          } else if (!is.na(lag(exRKD_Relapse$CD136,j)[i])&
+                     lag(exRKD_Relapse$CD136,j)[i] >250&
+                     # AND CD136 (j+1)th previous CD136 exists
+                     !is.na(lag(exRKD_Relapse$CD136,j+1)[i])&
+                     # AND max duration to previous encounter equals to 180 days
+                     lag(exRKD_Relapse$Leadvisit,j)[i]<180&
+                     # AND max interval between jth and (j+1)th previous encounter equals to 360 days
+                     (lag(exRKD_Relapse$`Date Of Visit`,j)[i]-lag(exRKD_Relapse$`Date Of Visit`,j+1)[i])<360&
+                     # AND jth previous visits is not definite relapse
+                     lag(exRKD_Relapse$Relapse_Code,j)[i]!=2&
+                     # AND (j+1)th previous visits is not definite relapse
+                     lag(exRKD_Relapse$Relapse_Code,j+1)[i]!=2&
+                     # AND jth previous visits has 50 percentage increase in CD136
+                     (100*(lag(exRKD_Relapse$CD136,j)[i]- lag(exRKD_Relapse$CD136,j+1)[i])/lag(exRKD_Relapse$CD136,j+1)[i])>50){ 
+            next 
+            #in other situation consider the previous encounter and cut the loop
+            } else (exRKD_Relapse$SymCD136J[i] = j-1)&break
+        #in other situation consider the previous encounter and cut the loop
+      } else (exRKD_Relapse$SymCD136J[i] = j-1)&break
+    }
+    #if it is not a "definite relapse"
+  } else (exRKD_Relapse$SymCD136J[i] = NA)
+}
+```
+
+```{r}
+# Determine the date of flare onset
+exRKD_Relapse$`Date Of Visit` <- as.character(exRKD_Relapse$`Date Of Visit`)
+for (i in 1:length(exRKD_Relapse$`RKD ID`-1)) {
+  #put the valuse in SymCD136J[i] in a new variable
+  n = exRKD_Relapse$SymCD136J[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_Relapse$CD136,n-j)[i])) {
+        (exRKD_Relapse$SymDateCD136J[i] = lag(exRKD_Relapse$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_Relapse$SymDateCD136J[i] = NA)
+}
+```
+
+```{r include=FALSE}
+## Save the data
+library(rio)
+Prodrom_CD136 <- exRKD_Relapse[,c("RKD ID","Date Of Visit","SymCD136J","SymDateCD136J")]
+Prodrom_CD136$`Date Of Visit` <- as.Date(Prodrom_CD136$`Date Of Visit`)
+export(Prodrom_CD136,"Prodrom_CD136.xlsx")
+```
+
+### 8. EQ5D:
+
+```{r include=FALSE}
+#import RKD data 
+library(dplyr)
+library(readxl)
+exRKD_Relapse <-  read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+```
+
+```{r}
+# exclude duplicated encounters
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(DupVisit == 0)
+```
+
+```{r include=FALSE}
+# import the EQ5D ds
+library(dplyr)
+library(readxl)
+EQ5D <- read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/4. Wranglin Data_Prodrome/8. EQ5D/RKD-EQ5D-5-Nov-21 Eithne-update.xlsx")
+```
+
+```{r}
+# select the useful variables of EQ5D ds
+EQ5D <-EQ5D %>%
+  filter(!is.na(Date)) %>%
+  select(`RKD ID`,Date,`Index Value`)
+EQ5D$RowNumber_index1 <- seq(1,length(EQ5D$`RKD ID`),1)
+```
+
+```{r}
+library(survival)
+exRKD_Relapse$indx1 <- neardate(exRKD_Relapse$`RKD ID`, EQ5D$`RKD ID`,  
+                            as.Date(exRKD_Relapse$`Date Of Visit`), as.Date(EQ5D$Date),best = c("prior"), nomatch = NA_integer_)
+exRKD_Relapse$indx2 <- neardate(exRKD_Relapse$`RKD ID`, EQ5D$`RKD ID`,  
+                            as.Date(exRKD_Relapse$`Date Of Visit`), as.Date(EQ5D$Date),best = c("after"), nomatch = NA_integer_)
+# join EQ5L dataset to the RKD data set according too the closest date before the visit date
+exRKD_EQ5D <- left_join(exRKD_Relapse, EQ5D, by = c("indx1"="RowNumber_index1") , na_matches = "never")
+# join EQ5L dataset to the RKD data set according too the closest date after the visit date
+exRKD_EQ5D <- left_join(exRKD_EQ5D , EQ5D, by = c("indx2"="RowNumber_index1") , na_matches = "never")
+```
+
+```{r}
+exRKD_EQ5D <- exRKD_EQ5D %>% 
+  mutate(Int_x = as.Date(exRKD_EQ5D$`Date Of Visit`)- as.Date(exRKD_EQ5D$Date.x)) %>%
+  mutate(Int_y = as.Date(exRKD_EQ5D$Date.y) - as.Date(exRKD_EQ5D$`Date Of Visit`))
+```
+
+```{r}
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  mutate(EQ5D_Value_x = ifelse(!is.na(Int_x)&abs(Int_x)<90,`Index Value.x`,NA)) %>%
+  mutate(EQ5D_Value_y = ifelse(!is.na(Int_y)&abs(Int_y)<90&abs(Int_x)>abs(Int_y),`Index Value.y`,NA))
+         
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  mutate(EQ5D = ifelse(abs(Int_x)<abs(Int_y)|abs(Int_x)==abs(Int_y),EQ5D_Value_x,EQ5D_Value_y))
+```
+
+```{r}
+library(rio)
+# select intersted variables
+#exRKD_EQ5D <- exRKD_EQ5D %>%
+  #select("RKD ID.x","Date Of Visit","Date.x","Index Value.x","Int_x","Date.y","Index Value.x","Int_y","EQ5D_Value_x","EQ5D_Value_y","EQ5D")
+#library(rio)
+#export(exRKD_EQ5D,"exRKD_EQ5D.xlsx")
+```
+
+```{r}
+# filter encounters with interval more than 3 months from diagnosis date
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  filter(`Interval from diagnosis (months)`>3)
+```
+
+```{r}
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  select("RKD ID.x","Date Of Visit","EQ5D","Relapse")
+```
+
+```{r}
+# Exclude encounters with missing values of CD136 and not definite relapse
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  filter(!is.na(EQ5D)|Relapse=="Definite Relapse")
+table(exRKD_EQ5D$Relapse)
+```
+
+```{r}
+# Compute the interval of every visit date from the next one for every patient
+exRKD_EQ5D <- exRKD_EQ5D %>%
+  group_by(`RKD ID.x`) %>%
+  mutate(Leadvisit = ifelse(is.na(difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")),"0",difftime(lead(`Date Of Visit`),`Date Of Visit`,units="days")))
+exRKD_EQ5D$Leadvisit <- as.numeric(exRKD_EQ5D$Leadvisit)
+exRKD_EQ5D$EQ5D <- abs(exRKD_EQ5D$EQ5D)
+```
+
+#### Determine the onset of relapse according to the EQ5D:
+
+1.  Check the previous visit date before every visit date with flare until there are symptoms by considering the rules:
+  + Max duration to prior encounter equals to 180 days
+  + Max 12 month interval between the 2 encounters prior the encounter
+  + The EQ5D in the prior encounter rose 10 percentage
+2.  Determine the date of flare onset
+
+```{r}
+# check every rows
+for (i in 1:length(exRKD_EQ5D$`RKD ID.x`)) {
+  # if the relapse is missing then putting SymEQ5DJ[i] = NA
+  if (is.na(exRKD_EQ5D$Relapse[i])) { 
+    exRKD_EQ5D$SymEQ5DJ[i] = NA
+   # if there is a "definite relapse"
+  } else if(exRKD_EQ5D$Relapse[i] == "Definite Relapse"){
+    for (j in 1:(i-1)) {
+      ## The RKD ID for previous encounter is related to the same patient
+      if (lag(exRKD_EQ5D$`RKD ID.x`,j)[i]== exRKD_EQ5D$`RKD ID.x`[i]&lag(exRKD_EQ5D$`RKD ID.x`,j+1)[i]==exRKD_EQ5D$`RKD ID.x`[i]){
+        # IF the jth previous EQ5D exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+        if (is.na(lag(exRKD_EQ5D$EQ5D,j)[i])&lag(exRKD_EQ5D$Leadvisit,j)[i]<180&lag(exRKD_EQ5D$Relapse,j)[i]!="Definite Relapse"|
+        # OR the (j+1)th previous EQ5D exists AND its interval with the encounters is less than 180 days AND its relapse situation is not definite relapse
+            is.na(lag(exRKD_EQ5D$EQ5D,j+1)[i])&lag(exRKD_EQ5D$Leadvisit,j+1)[i]<360&lag(exRKD_EQ5D$Relapse,j+1)[i]!="Definite Relapse"){
+          next
+          # IF EQ5D exits in the jth EQ5D exists AND more than 250 
+          } else if (!is.na(lag(exRKD_EQ5D$EQ5D,j)[i])&
+                     # AND EQ5D (j+1)th previous EQ5D exists
+                     !is.na(lag(exRKD_EQ5D$EQ5D,j+1)[i])&
+                     # AND max duration to previous encounter equals to 180 days
+                     lag(exRKD_EQ5D$Leadvisit,j)[i]<180&
+                     # AND max interval between jth and (j+1)th previous encounter equals to 360 days
+                     (lag(exRKD_EQ5D$`Date Of Visit`,j)[i]-lag(exRKD_EQ5D$`Date Of Visit`,j+1)[i])<360&
+                     # AND jth previous visits is not definite relapse
+                     lag(exRKD_EQ5D$Relapse,j)[i]!="Definite Relapse"&
+                     # AND (j+1)th previous visits is not definite relapse
+                     lag(exRKD_EQ5D$Relapse,j+1)[i]!="Definite Relapse"&
+                     # AND jth previous visits has 10 percentage decrease in EQ5D
+                     (abs(lag(exRKD_EQ5D$EQ5D,j+1)[i])-abs(lag(exRKD_EQ5D$EQ5D,j)[i]))> 0.1){ 
+            next 
+            #in other situation consider the previous encounter and cut the loop
+            } else (exRKD_EQ5D$SymEQ5DJ[i] = j-1)&break
+        #in other situation consider the previous encounter and cut the loop
+      } else (exRKD_EQ5D$SymEQ5DJ[i] = j-1)&break
+    }
+    #if it is not a "definite relapse"
+  } else (exRKD_EQ5D$SymEQ5DJ[i] = NA)
+}
+```
+
+```{r}
+# Determine the date of flare onset
+exRKD_EQ5D$`Date Of Visit` <- as.character(exRKD_EQ5D$`Date Of Visit`)
+for (i in 1:length(exRKD_EQ5D$`RKD ID.x`-1)) {
+  #put the values in SymEQ5DJ[i] in a new variable
+  n = exRKD_EQ5D$SymEQ5DJ[i]
+  if (!is.na(n)) {
+    for (j in 0:n) {
+      if (!is.na(lag(exRKD_EQ5D$EQ5D,n-j)[i])) {
+        (exRKD_EQ5D$SymDateEQ5DJ[i] = lag(exRKD_EQ5D$`Date Of Visit`,n-j)[i])&break
+      } else next
+    } 
+  } else (exRKD_EQ5D$SymDateEQ5DJ[i] = NA)
+}
+```
+
+```{r}
+## Save the data
+library(rio)
+Prodrom_EQ5D <- exRKD_EQ5D[,c("RKD ID.x","Relapse","Leadvisit","Date Of Visit","EQ5D","SymEQ5DJ","SymDateEQ5DJ")]
+Prodrom_EQ5D$`Date Of Visit` <- as.Date(Prodrom_EQ5D$`Date Of Visit`)
+export(Prodrom_EQ5D,"Prodrom_EQ5D.xlsx")
+```
+
+### Determin the final prodrom
+To determine the final prodrome the results of all factors are be combined:\
+1. Excluding the duplicated encounters and encounters with no final relapse situation\
+2. link the created variables of symptoms to the main data that edited\
+3. Onset date for the encounters without symptoms are defined the previous date of visit if it is not a definite relapse and its interval with the selected encounters is less than 180 days\
+4. Determine the interval of encounters from the date of flare onset or previous visit date \
+5. As there are some encounters with more than one symptoms, compute the max of the interval from the date of visit and the date of flare onset for every encounter\
+Evntually, there are 270 encounters without symptom, 50 encounters with one symptom, 16 encounters with two, 4 encounters with three symptoms and encounters with four symptoms . The median of prodrome according to 149 encounters (for 192 encounters with relapse, there are no symptoms or upper bound according to the definition) with definite relapse is equal to 90.5 days (mean = ).\
+
+```{r include=FALSE}
+# import data
+library(readxl)
+exRKD_Relapse <- read_excel("C:/Users/Administrator/OneDrive - TCDUD.onmicrosoft.com/Bahareh Khosravi/RKD_Project/2. Wrangling Data_Flare/exRKD_Relapse.05.09.2022.xlsx")
+```
+
+```{r include=FALSE}
+# exclude the encounters with the duplicated date of visit
+library(dplyr)
+exRKD_Relapse <-exRKD_Relapse %>%
+  group_by(`RKD ID`) %>%
+  mutate(DupVisit = as.numeric(duplicated(`Date Of Visit`))) %>%
+  filter(!is.na(Relapse_Code)&DupVisit == 0)
+```
+
+```{r include=FALSE}
+# Join the variables created to the main dataset:
+library(dplyr)
+exRKD_Relapse$`Date Of Visit` <- as.Date(exRKD_Relapse$`Date Of Visit`)
+exRKD_join <- left_join(exRKD_Relapse, Prodrom_Relapse, by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join,Prodrom_CRP , by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join,Prodrom_Cr , by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join,Prodrom_ANCALevel , by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join,Prodrom_UniBlood ,by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join,Prodrom_UniProtein, by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join, Prodrom_CD136, by = c("RKD ID"="RKD ID","Date Of Visit"="Date Of Visit") , na_matches = "never")
+exRKD_join <- left_join(exRKD_join, Prodrom_EQ5D, by = c("RKD ID"="RKD ID.x","Date Of Visit"="Date Of Visit") , na_matches = "never")
+```
+
+```{r include=FALSE}
+# determine the previous date of visit (with a clear flare situation) for the encounters without symptoms:
+exRKD_join$`Date Of Visit` <- as.character(exRKD_join$`Date Of Visit`)
+exRKD_join <- exRKD_join %>%
+  group_by(`RKD ID`) %>%
+  mutate(MaxDate_Sym_Re = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymRelapseJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymRelapseJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymRelapseJ==0), lag(`Date Of Visit`), SymDateRelapse)) %>%
+  mutate(MaxDate_Sym_CRP = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymCRPJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymCRPJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymCRPJ==0), lag(`Date Of Visit`),SymDateCRP)) %>%
+   mutate(MaxDate_Sym_Cr = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymCrJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymCrJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymCrJ==0), lag(`Date Of Visit`),SymDateCr)) %>%
+  mutate(MaxDate_Sym_ANCA = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymANCAJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymANCAJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymANCAJ==0), lag(`Date Of Visit`),SymDateANCAJ)) %>%
+  mutate(MaxDate_Sym_UniBlood = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymUniBloodJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymUniBloodJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymUniBloodJ==0), lag(`Date Of Visit`),SymDateUniBloodJ)) %>%
+   mutate(MaxDate_Sym_UniProtein = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymUniProteinJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymUniProteinJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymUniProteinJ==0), lag(`Date Of Visit`),SymDateUniProteinJ)) %>%
+   mutate(MaxDate_Sym_CD136 = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymCD136J))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymCD136J))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymCD136J==0), lag(`Date Of Visit`),SymDateCD136J)) %>%
+   mutate(MaxDate_Sym_EQ5D = ifelse((Relapse_Code == "2"&is.na(lag(Relapse_Code))&is.na(SymEQ5DJ))| 
+           (Relapse_Code == "2"&lag(Relapse_Code)!="2"&is.na(SymEQ5DJ))|
+             (Relapse_Code =="2"&lag(Relapse_Code)!="2"&SymEQ5DJ==0), lag(`Date Of Visit`),SymDateEQ5DJ))
+ 
+```
+
+```{r include=FALSE}
+# compute the interval of the prodrome
+exRKD_join <- exRKD_join %>%
+  group_by(`RKD ID`) %>%
+  mutate(IntSymRelapse = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_Re),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_Re),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+  mutate(IntSymCRP = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_CRP),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_CRP),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+   mutate(IntSymCr = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_Cr),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_Cr),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+   mutate(IntSymANCA = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_ANCA),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_ANCA),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+   mutate(IntSymUniBlood = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_UniBlood),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_UniBlood),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+   mutate(IntSymUniProtein = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_UniProtein),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_UniProtein),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA))) %>%
+   mutate(IntSymCD136 = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_CD136 ),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_CD136),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA)))%>%
+  mutate(IntSymEQ5D = ifelse(!is.na(`Date Of Visit`)&!is.na(MaxDate_Sym_EQ5D),as.Date(`Date Of Visit`)-as.Date(MaxDate_Sym_EQ5D),
+                                ifelse(Relapse_Code =="2"&is.na(lag(`RKD ID`))&(`Interval from diagnosis (months)`-3)*30<180,(`Interval from diagnosis (months)`-3)*30, NA)))
+```
+
+```{r}
+# max prodrome time
+exRKD_join <- exRKD_join %>%
+  mutate(Interval_1 = pmax(IntSymRelapse, IntSymCRP, IntSymCr, IntSymANCA, IntSymUniBlood, IntSymUniProtein, IntSymCD136, IntSymEQ5D))
+```
+
+```{r}
+#  
+exRKD_join <- exRKD_join %>%
+  mutate(Interval_2 = ifelse(Relapse_Code =="2"&is.na(IntSymRelapse)|Relapse_Code =="2"&is.na(IntSymCRP)|
+                             Relapse_Code =="2"&is.na(IntSymCr)|Relapse_Code =="2"&is.na(IntSymANCA)|
+                             Relapse_Code =="2"&is.na(IntSymUniBlood)|Relapse_Code =="2"&is.na(IntSymUniProtein)|
+                             Relapse_Code =="2"&is.na(IntSymCD136)|Relapse_Code =="2"&is.na(IntSymEQ5D), Lagvisit, Interval_1))
+```
+
+```{r}
+#
+exRKD_join <- exRKD_join %>%
+  mutate(Interval = ifelse(Relapse_Code =="2"&Interval_2==0, (`Interval from diagnosis (months)`-3)*30, Interval_2))
+```
+
+```{r}
+# determine encounters with different number of symptoms
+exRKD_join <- exRKD_join %>%
+  mutate(NumSym = as.numeric(SymRelapseJ != 0)+ as.numeric(SymCRPJ!= 0) + as.numeric(SymCrJ != 0) + as.numeric(SymANCAJ != 0)+
+           as.numeric(SymUniBloodJ!=0) + as.numeric(SymUniProteinJ!=0) +  as.numeric(SymCD136J!=0) + as.numeric(SymEQ5DJ!=0))
+table(exRKD_join$NumSym)
+```
+
+```{r}
+# determine encounters with at least one symptoms
+exRKD_join <- exRKD_join %>%
+  mutate(Sym = ifelse(!is.na(SymRelapseJ)&SymRelapseJ!=0|!is.na(SymCRPJ)&SymCRPJ!=0|!is.na(SymCrJ)&SymCrJ!=0|!is.na(SymANCAJ)&SymANCAJ!=0|
+           !is.na(SymUniBloodJ)&SymUniBloodJ!=0|!is.na(SymUniProteinJ)&SymUniProteinJ!=0|!is.na(SymCD136J)&SymCD136J!=0|!is.na(SymEQ5DJ)&SymEQ5DJ!=0, "Yes", "No"))
+
+table(exRKD_join$Sym)
+```
+
+```{r include=FALSE}
+# exclude the selected last visit with interval more than 180 days and create a new variable for prodrom
+exRKD_join <- exRKD_join %>%
+  mutate(prodrom = ifelse(Sym == "No"& Interval>180,NA,Interval))
+```
+
+```{r}
+# filter encounters with definite ANCA vasculitis
+exRKD_join_plot <- exRKD_join %>%
+  filter(Relapse_Code =="2") 
+# compute the man and median of the prodrome time
+# summary(exRKD_join_plot$Interval) # median = 204
+# compute the man and median of the prodrome time after excluding the upper bound more than 180 days
+summary(exRKD_join_plot$prodrom)
+```
+
+```{r include=FALSE}
+exRKD_join_plot <- exRKD_join_plot %>%
+  mutate(Sex = as.numeric(Gender=="Male")) %>%
+  mutate(ANCASpec = ifelse(`At any point ANCA specificity`== "MPO",0,
+                                  ifelse(`At any point ANCA specificity`== "PR3",1,NA)))
+
+exRKD_join_plot <- exRKD_join_plot %>% 
+ mutate(ANCAType = ifelse(`Small vessel vasculitis (ANCA associated)`=="Granulomatosis with polyangiitis (Wegener) - Orpha:900","0",
+                          ifelse(`Small vessel vasculitis (ANCA associated)`=="Microscopic polyangiitis (including renal limited vasculitis) - ORPHA:727","1","2")))
+exRKD_join_plot$id <- row_number(exRKD_join_plot$`RKD ID`)
+exRKD_join_plot <- exRKD_join_plot[,c("id","prodrom","Sex","ANCASpec","ANCAType")]
+```
+
